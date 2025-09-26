@@ -1,5 +1,4 @@
 from flask import Flask,render_template,Response
-from unittest import result
 import numpy as np
 import cv2
 import time 
@@ -8,15 +7,6 @@ import tensorflow as tf
 import tensorflow_hub as hub
 from matplotlib import pyplot as plt
 import data as data
-import win32api
-import pyttsx3
-import pythoncom
-from time import sleep
-import schedule
-import time
-import matplotlib.pyplot as plt
-import gtts  
-from playsound import playsound  
 
 app=Flask(__name__)
 #loding the model
@@ -26,15 +16,19 @@ app=Flask(__name__)
 # https://tfhub.dev/google/tfjs-model/movenet/multipose/lightning/1
 model = hub.load("https://tfhub.dev/google/movenet/multipose/lightning/1")
 movenet = model.signatures['serving_default']
-cap=cv2.VideoCapture(0)
+# Initialize webcam with error handling
+cap = None
+try:
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Warning: Could not open webcam. Running in headless mode.")
+        cap = None
+except Exception as e:
+    print(f"Warning: Webcam initialization failed: {e}")
+    cap = None
 
 detector=pm.PoseDetector()
 dataList=data.AngleData
-# print(dataList)
-
-# Check if the webcam is opened correctly
-if not cap.isOpened():
-    raise IOError("Cannot open webcam")
 
 def make_1080p():
     cap.set(3, 1920)
@@ -249,6 +243,16 @@ def compare_left_leg(left_leg):
 arr = np.array([])
     
 def generate_frames(arr):
+    if cap is None:
+        # Return a placeholder frame if no webcam is available
+        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(placeholder, "No webcam available", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        ret, buffer = cv2.imencode('.jpg', placeholder)
+        frame = buffer.tobytes()
+        yield(b'--frame\r\n'
+              b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        return
+    
     count=0
     timeout=20
     timeout_start=time.time()
@@ -257,6 +261,8 @@ def generate_frames(arr):
             
         ## read the camera frame
         success, frame = cap.read()
+        if not success:
+            break
         frame = cv2.flip(frame, 1)
   
         #resize the image
@@ -270,9 +276,8 @@ def generate_frames(arr):
         results=movenet(input_img)
         keypoints_with_scores=results['output_0'].numpy()[:,:,:51].reshape((6,17,3)) #finding the main keypoints that we need for detection
         
-        #showing the keypoints on to the screen
+        # overlay keypoints (no GUI window in server)
         loop_through_people(frame, keypoints_with_scores, EDGES, 0.1)
-        cv2.imshow('Users Yoga Pose', frame)
 
         # points detection 
         frame=detector.findPose(frame,False)
@@ -319,16 +324,13 @@ def generate_frames(arr):
 
                 
                 
-        cv2.waitKey(1)
+        # no cv2.waitKey in headless
         ret,buffer=cv2.imencode('.jpg',frame)
         frame=buffer.tobytes()
 
         yield(b'--frame\r\n'
                     b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        print('Original Array:', arr)
-        x=range(1, len(arr)+1)
-        y=arr
-        plt.plot(x,y)
+        # plotting disabled in streaming loop to avoid server overhead
 
 
 
